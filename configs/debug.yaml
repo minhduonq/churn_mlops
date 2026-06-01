@@ -1,0 +1,59 @@
+project:
+  name: customer-churn-mlops
+  seed: 42
+
+data:
+  train_path: data/raw/train.csv
+  test_path: data/raw/test.csv
+  original_path: data/raw/original.csv
+  sample_submission_path: data/raw/sample_submission.csv
+  target_col: Churn
+  id_col: id
+
+features:
+  categorical_cols:
+    - gender
+    - SeniorCitizen
+    - Partner
+    - Dependents
+    - PhoneService
+    - MultipleLines
+    - InternetService
+    - OnlineSecurity
+    - OnlineBackup
+    - DeviceProtection
+    - TechSupport
+    - StreamingTV
+    - StreamingMovies
+    - Contract
+    - PaperlessBilling
+    - PaymentMethod
+
+  numerical_cols:
+    - tenure
+    - MonthlyCharges
+    - TotalCharges
+
+training:
+  n_folds: 3
+  inner_folds: 2
+  model_dir: models/debug
+  prediction_dir: data/predictions/debug
+
+xgboost:
+  n_estimators: 3000
+  learning_rate: 0.03
+  max_depth: 3
+  subsample: 0.81
+  colsample_bytree: 0.32
+  min_child_weight: 6
+  reg_alpha: 3.5017
+  reg_lambda: 1.2925
+  gamma: 0.79
+  objective: binary:logistic
+  eval_metric: auc
+  tree_method: hist
+  device: cpu
+  enable_categorical: true
+  early_stopping_rounds: 100
+  verbosity: 1

@@ -1,76 +1,115 @@
-import numpy as np
 import pandas as pd
 from itertools import combinations
-from sklearn.model_selection import StratifiedKFold
 
-def basic_preprocess(train, test, original, config):
-    categortical_cols = config["features"]['categorical_cols']
-    numerical_cols = config["features"]["numerical_cols"]
 
-    for df in [train, test, original]:
-        for col in categortical_cols:
+class ChurnFeatureBuilder:
+    def __init__(self, config: dict):
+        self.config = config
+
+        self.categorical_cols = config["features"]["categorical_cols"]
+        self.numerical_cols = config["features"]["numerical_cols"]
+
+        self.freq_maps = {}
+        self.feature_cols = []
+
+        self.top_cats_for_ngram = [
+            "Contract",
+            "InternetService",
+            "PaymentMethod",
+            "OnlineSecurity",
+            "TechSupport",
+        ]
+
+    def fit(self, df: pd.DataFrame):
+        df = df.copy()
+
+        for col in self.categorical_cols:
+            if col in df.columns:
+                self.freq_maps[col] = df[col].value_counts(normalize=True)
+
+        transformed = self.transform(df)
+        self.feature_cols = list(transformed.columns)
+
+        return self
+
+    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+
+        # Basic type casting
+        for col in self.categorical_cols:
             if col in df.columns:
                 df[col] = df[col].astype("category")
-        
-        for col in numerical_cols:
+
+        for col in self.numerical_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-    return train, test, original
 
-def add_frequency_features(train, test, original, categorical_cols):
-    for col in categorical_cols:
-        freq = pd.concat([train[col],original[col]]).value_counts(normalize=True)
-        
-        for df in [train, test, original]:
-            mapped = df[col].map(freq).astype("float32")
-            df[f"FREQ_{col}"] = mapped.fillna(0)
-    
-    return train, test, original
+        # Frequency encoding
+        for col in self.categorical_cols:
+            if col in df.columns and col in self.freq_maps:
+                df[f"FREQ_{col}"] = (
+                    df[col]
+                    .map(self.freq_maps[col])
+                    .astype("float32")
+                    .fillna(0.0)
+                )
 
-def add_ngram_features(train, test, top_cats):
-    bigram_cols = []
-    trigram_cols = []
+        # N-gram categorical features
+        ngram_cols = []
 
-    for c1, c2 in combinations(top_cats, 2):
-        col_name = f"BG_{c1}_{c2}"
-        for df in [train, test]:
-            df[col_name] = (df[c1].astype(str) + "_" + df[c2].astype(str)).astype("category")
-        bigram_cols.append(col_name)
-    
-    for c1, c2, c3 in combinations(top_cats[:4], 3):
-        col_name = f"TG_{c1}_{c2}_{c3}"
-        for df in [train, test]:
-            df[col_name] = (df[c1].astype(str) + "_" + df[c2].astype(str) + "_" + df[c3].astype(str)).astype("category")
-        trigram_cols.append(col_name)
+        available_top_cats = [
+            col for col in self.top_cats_for_ngram if col in df.columns
+        ]
 
-    return train, test, bigram_cols, trigram_cols
+        for c1, c2 in combinations(available_top_cats, 2):
+            col_name = f"BG_{c1}_{c2}"
+            df[col_name] = (
+                df[c1].astype(str) + "_" + df[c2].astype(str)
+            ).astype("category")
+            ngram_cols.append(col_name)
 
-def build_features(train, test, original, config):
-    categorical_cols = config["features"]["categorical_cols"]
-    numerical_cols = config["features"]["numerical_cols"]
+        for c1, c2, c3 in combinations(available_top_cats[:4], 3):
+            col_name = f"TG_{c1}_{c2}_{c3}"
+            df[col_name] = (
+                df[c1].astype(str)
+                + "_"
+                + df[c2].astype(str)
+                + "_"
+                + df[c3].astype(str)
+            ).astype("category")
+            ngram_cols.append(col_name)
 
-    train, test, original = basic_preprocess(train, test, original, config)
-    train, test, original = add_frequency_features(train, test, original, categorical_cols)
+        feature_cols = []
 
-    top_cats_for_ngram = [
-        "Contract",
-        "InternetService",
-        "PaymentMethod",
-        "OnlineSecurity",
-        "TechSupport",
-    ]
+        for col in self.categorical_cols:
+            if col in df.columns:
+                feature_cols.append(col)
 
-    train, test, bigram_cols, trigram_cols = add_ngram_features(train, test, top_cats_for_ngram)
+        for col in self.numerical_cols:
+            if col in df.columns:
+                feature_cols.append(col)
 
-    feature_cols = []
-    feature_cols.extend(categorical_cols)
-    feature_cols.extend(numerical_cols)
+        freq_cols = [
+            f"FREQ_{col}"
+            for col in self.categorical_cols
+            if f"FREQ_{col}" in df.columns
+        ]
 
-    freq_cols = [f"FREQ_{col}" for col in categorical_cols]
-    feature_cols.extend(freq_cols)
-    feature_cols.extend(bigram_cols)
-    feature_cols.extend(trigram_cols)
+        feature_cols.extend(freq_cols)
+        feature_cols.extend(ngram_cols)
 
-    feature_cols = [col for col in feature_cols if col in train.columns]
-    return train, test, original, feature_cols
+        output = df[feature_cols].copy()
 
+        # Nếu đã fit rồi thì đảm bảo thứ tự cột giống lúc train
+        if self.feature_cols:
+            for col in self.feature_cols:
+                if col not in output.columns:
+                    output[col] = 0
+
+            output = output[self.feature_cols]
+
+        return output
+
+    def fit_transform(self, df: pd.DataFrame) -> pd.DataFrame:
+        self.fit(df)
+        return self.transform(df)

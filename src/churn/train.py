@@ -12,7 +12,7 @@ from sklearn.metrics import roc_auc_score
 
 from src.churn.config import load_config
 from src.churn.data import load_data
-from src.churn.features import build_features
+from src.churn.features import ChurnFeatureBuilder
 
 def train_cv(config:dict):
     seed = config["project"]["seed"]
@@ -24,21 +24,39 @@ def train_cv(config:dict):
     prediction_dir = Path(config["training"]["prediction_dir"])
 
     model_dir.mkdir(parents=True, exist_ok=True)
+
     prediction_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading data...")
     train, test, original = load_data(config)
 
-    print("Building features...")
-    train, test, original, feature_cols = build_features(train, test, original, config)
+    feature_fit_df = pd.concat(
+        [train.drop(columns=[target_col], errors="ignore"),
+         original.drop(columns=[target_col], errors='ignore')],
+         axis=0,
+         ignore_index=True,
+    )
 
-    X = train[feature_cols].copy()
+    feature_builder = ChurnFeatureBuilder(config)
+    feature_builder.fit(feature_fit_df)
+
+    X = feature_builder.transform(train.drop(columns=[target_col], errors='ignore'))
     y = train[target_col].copy()
-    X_test = test[feature_cols].copy()
+
+    X_test = feature_builder.transform(test)
+
+    # print("Building features...")
+    # train, test, original, feature_cols = build_features(train, test, original, config)
+
+    # X = train[feature_cols].copy()
+    # y = train[target_col].copy()
+    # X_test = test[feature_cols].copy()
+
+    feature_cols = feature_builder.feature_cols
 
     print(f"Train shape: {X.shape}")
     print(f"Test shape: {X_test.shape}")
-    print(f"Features: {len(feature_cols)}")
+    # print(f"Features: {len(feature_cols)}")
 
     xgb_params = config["xgboost"].copy()
     xgb_params['random_state'] = seed
@@ -86,6 +104,9 @@ def train_cv(config:dict):
         "n_folds": n_folds,
         "n_features": len(feature_cols),
     }
+
+    feature_pipeline_path = model_dir / "feature_pipeline.pkl"
+    joblib.dump(feature_builder, feature_pipeline_path)
 
     with open(model_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=4)
